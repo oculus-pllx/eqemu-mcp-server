@@ -3,10 +3,19 @@
 import re
 
 from mcp.server import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 
 from .annotations import DESTRUCTIVE_WRITE
 from .config import MAX_QUERY_ROWS
 from .helpers import db_conn, sanitize_table_name
+
+
+def _cell(value) -> str:
+    """One value as text: NULL stays visible, and control characters cannot break the table's rows."""
+    if value is None:
+        return "NULL"
+    return str(value).replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+
 
 # Well-known EQEmu table relationships
 _KNOWN_RELATIONS = {
@@ -148,27 +157,29 @@ def register(mcp: MCPServer) -> None:
     def run_query(sql: str, limit: int = 100) -> str:
         """Run a read-only SQL query.
 
-        Only SELECT, SHOW, DESCRIBE, and EXPLAIN are allowed.
+        Only SELECT, SHOW, DESCRIBE, and EXPLAIN are allowed. NULL prints as NULL; newlines and tabs inside values
+        print as \\n and \\t. When more rows exist than `limit`, the output ends with a "truncated" notice: page
+        with LIMIT/OFFSET.
 
         Args:
             sql: The SQL query.
             limit: Max rows (default 100, max 500).
         """
-        limit = min(limit, MAX_QUERY_ROWS)
+        limit = max(1, min(limit, MAX_QUERY_ROWS))
         stripped = sql.strip().rstrip(";").strip()
         first_word = stripped.split()[0].upper() if stripped else ""
         if first_word not in ("SELECT", "SHOW", "DESCRIBE", "DESC", "EXPLAIN"):
-            return "Error: only SELECT, SHOW, DESCRIBE, and EXPLAIN queries are allowed."
+            raise ToolError("only SELECT, SHOW, DESCRIBE, and EXPLAIN queries are allowed.")
 
         dangerous = re.compile(
             r'\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|REPLACE|GRANT|REVOKE|INTO\s+OUTFILE|INTO\s+DUMPFILE|LOAD_FILE)\b',
             re.IGNORECASE,
         )
         if dangerous.search(stripped):
-            return "Error: query contains disallowed keywords."
+            raise ToolError("query contains disallowed keywords.")
 
         if first_word == "SELECT" and "LIMIT" not in stripped.upper():
-            stripped += f" LIMIT {limit}"
+            stripped += f" LIMIT {limit + 1}"  # one extra row tells us whether the result was cut off
 
         conn = db_conn()
         try:
@@ -178,21 +189,24 @@ def register(mcp: MCPServer) -> None:
             if not rows:
                 return "Query returned 0 rows."
             columns = [desc[0] for desc in cursor.description]
+            shown = [[_cell(v) for v in row] for row in rows[:limit]]
             col_widths = [len(c) for c in columns]
-            for row in rows:
+            for row in shown:
                 for i, val in enumerate(row):
-                    col_widths[i] = max(col_widths[i], len(str(val)))
-            col_widths = [min(w, 60) for w in col_widths]
+                    col_widths[i] = max(col_widths[i], len(val))
+            col_widths = [min(w, 60) for w in col_widths]  # alignment only; values are never cut
 
             header = " | ".join(c.ljust(col_widths[i]) for i, c in enumerate(columns))
             sep = "-+-".join("-" * w for w in col_widths)
             lines = [header, sep]
-            for row in rows[:limit]:
-                lines.append(" | ".join(str(v or "").ljust(col_widths[i])[:60] for i, v in enumerate(row)))
+            for row in shown:
+                lines.append(" | ".join(v.ljust(col_widths[i]) for i, v in enumerate(row)))
 
             result = "\n".join(lines)
             if len(rows) > limit:
-                result += f"\n\n... {len(rows) - limit} more rows"
+                result += f"\n\n(truncated at {limit} rows: more rows exist; page with LIMIT/OFFSET)"
+            else:
+                result += f"\n\n({len(rows)} rows)"
             return result
         finally:
             conn.close()

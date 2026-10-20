@@ -203,8 +203,7 @@ def register_write(mcp: MCPServer) -> None:
         npc_id: int,
         item_id: int,
         chance: float = 100.0,
-        min_amount: int = 1,
-        max_amount: int = 1,
+        multiplier: int = 1,
     ) -> str:
         """Add an item to an NPC's loot table. Creates the loot chain if needed.
 
@@ -212,8 +211,7 @@ def register_write(mcp: MCPServer) -> None:
             npc_id: NPC type ID.
             item_id: Item ID to add.
             chance: Drop chance percentage (default 100).
-            min_amount: Minimum quantity (default 1).
-            max_amount: Maximum quantity (default 1).
+            multiplier: How many times the item rolls at `chance` (lootdrop_entries.multiplier, default 1).
         """
         conn = db_conn()
         try:
@@ -258,8 +256,8 @@ def register_write(mcp: MCPServer) -> None:
             # Create lootdrop_entry
             cursor.execute(
                 """INSERT INTO lootdrop_entries (lootdrop_id, item_id, item_charges, equip_item,
-                   chance, min_amount, max_amount) VALUES (%s, %s, 1, 1, %s, %s, %s)""",
-                (ld_id, item_id, chance, min_amount, max_amount),
+                   chance, multiplier) VALUES (%s, %s, 1, 1, %s, %s)""",
+                (ld_id, item_id, chance, multiplier),
             )
             conn.commit()
 
@@ -267,7 +265,7 @@ def register_write(mcp: MCPServer) -> None:
                 f"Added {item[0]} to {npc[0]}'s loot:\n"
                 f"  loottable_id = {lt_id}\n"
                 f"  lootdrop_id = {ld_id}\n"
-                f"  chance = {chance}%, qty = {min_amount}-{max_amount}\n"
+                f"  chance = {chance}% x{multiplier}\n"
                 f"Note: use #repop or rezone to see changes."
             )
         finally:

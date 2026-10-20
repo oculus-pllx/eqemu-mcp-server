@@ -233,13 +233,14 @@ def register(mcp: MCPServer) -> None:
 
             cursor.execute(
                 """SELECT lt.id, lt.name, lte.lootdrop_id, ld.name as drop_name,
-                          lte.multiplier, lte.probability,
-                          lde.item_id, i.Name as item_name, lde.chance, lde.min_amount, lde.max_amount
+                          lte.multiplier, lte.probability, lte.droplimit, lte.mindrop,
+                          lde.item_id, i.Name as item_name, lde.chance, lde.multiplier,
+                          lde.item_charges, lde.equip_item
                    FROM loottable lt
                    JOIN loottable_entries lte ON lte.loottable_id = lt.id
                    JOIN lootdrop ld ON ld.id = lte.lootdrop_id
                    JOIN lootdrop_entries lde ON lde.lootdrop_id = ld.id
-                   JOIN items i ON i.id = lde.item_id
+                   LEFT JOIN items i ON i.id = lde.item_id
                    WHERE lt.id = %s
                    ORDER BY ld.name, lde.chance DESC""",
                 (npc[1],),
@@ -254,8 +255,12 @@ def register(mcp: MCPServer) -> None:
                 drop_name = r[3]
                 if drop_name != current_drop:
                     current_drop = drop_name
-                    lines.append(f"\n  Drop: {drop_name} (ID: {r[2]}) mult={r[4]} prob={r[5]}%")
-                lines.append(f"    [{r[6]}] {r[7]:<40} chance={r[8]}% qty={r[9]}-{r[10]}")
+                    lines.append(
+                        f"\n  Drop: {drop_name} (ID: {r[2]}) mult={r[4]} prob={r[5]}% droplimit={r[6]} mindrop={r[7]}"
+                    )
+                item_name = r[9] if r[9] is not None else "(no such item)"
+                equipped = " equipped" if r[13] else ""
+                lines.append(f"    [{r[8]}] {item_name:<40} chance={r[10]}% x{r[11]} charges={r[12]}{equipped}")
             return "\n".join(lines)
         finally:
             conn.close()
